@@ -1,0 +1,22 @@
+[Unit]
+Description=Shareit - chat familiar con IA
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/shareit
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=SHAREIT_HOST=::
+Environment=SHAREIT_PORT=8787
+Environment=SHAREIT_DATA_DIR=%h/shareit-data
+# Opcional: archivo con overrides (SHAREIT_LLM_MODEL, SHAREIT_APP_NAME, ...)
+EnvironmentFile=-%h/shareit-data/env
+ExecStart=%h/.local/bin/node --disable-warning=ExperimentalWarning server/index.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,34 @@
+#!/bin/bash
+# mdns-alias <nombre> — publica <nombre>.local por mDNS con la IPv4 del server en la LAN y su IPv6
+# ULA (fc00::/7) de la misma interfaz. Nunca publica una IPv6 pública: la app es solo de casa.
+# Publicar también la IPv6 evita que macOS espere ~5 s una respuesta AAAA que nunca llega.
+# Lo usa mdns-alias@.service; instalado (root) en /usr/local/bin/mdns-alias.
+# Config opcional (EnvironmentFile del servicio, /etc/default/mdns-alias):
+#   LAN_IP=...     IPv4 a publicar (si falta: la de la ruta por defecto)
+#   LAN_IPV6=...   ULA a publicar (si falta: la ULA estable de la interfaz de LAN_IP; vacío = ninguna)
+set -euo pipefail
+NAME="${1:?uso: mdns-alias <nombre>}"
+
+V4="${LAN_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')}"
+[ -n "$V4" ] || { echo "mdns-alias: no sé la IPv4 de la LAN (definí LAN_IP)" >&2; exit 1; }
+IF="$(ip -o -4 addr show | awk -v ip="$V4" '{split($4,a,"/")} a[1]==ip {print $2; exit}')"
+[ -n "$IF" ] || { echo "mdns-alias: $V4 todavía no está en ninguna interfaz" >&2; exit 1; }
+
+if [ -n "${LAN_IPV6+x}" ]; then
+  ULA="$LAN_IPV6"
+else
+  # ULA estable (no temporaria, no deprecada) de la interfaz de la LAN; otras interfaces (VPNs) quedan afuera.
+  ULA="$(ip -o -6 addr show dev "$IF" scope global | grep -vE 'temporary|deprecated|tentative' \
+    | awk '{split($4,a,"/")} a[1] ~ /^f[cd][0-9a-f][0-9a-f]:/ {print a[1]; exit}')"
+fi
+case "$ULA" in ""|f[cd]*) ;; *) echo "mdns-alias: LAN_IPV6=$ULA no es ULA (fc00::/7); no la publico" >&2; ULA="" ;; esac
+
+avahi-publish -a -R "$NAME.local" "$V4" &
+if [ -n "$ULA" ]; then
+  avahi-publish -a -R "$NAME.local" "$ULA" &
+else
+  echo "mdns-alias: sin IPv6 ULA; publico solo $V4" >&2
+fi
+# Si cualquiera de los dos se cae, salir para que systemd reinicie todo.
+wait -n
+exit 1

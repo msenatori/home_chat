@@ -1,0 +1,5 @@
+# /etc/sudoers.d/lanapp — `lanapp` prende/apaga alias mDNS sin contraseña.
+# Solo este script root, que valida acción y nombre. Cambiá USUARIO por el usuario del server e instalá:
+#   sed "s/USUARIO/$USER/" lanapp.sudoers | sudo tee /etc/sudoers.d/lanapp >/dev/null
+#   sudo chmod 440 /etc/sudoers.d/lanapp && sudo visudo -c
+USUARIO ALL=(root) NOPASSWD: /usr/local/sbin/mdns-alias-ctl

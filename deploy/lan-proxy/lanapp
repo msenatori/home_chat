@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# lanapp — publica apps del servidor en la red de casa (solo IPs privadas).
+#   lanapp add <nombre> <puerto>   → https://<nombre>.$BASE_DOMAIN y http://<nombre>.local → 127.0.0.1:<puerto>
+#   lanapp rm <nombre>
+#   lanapp list
+# No toca DNS ni certificados: el comodín *.$BASE_DOMAIN ya los cubre. El alias mDNS
+# <nombre>.local se prende con `sudo mdns-alias-ctl` (regla sudoers sin contraseña, solo eso).
+# Config: $SHAREIT_DATA/proxy.env (BASE_DOMAIN, APP_NAME, LOCAL_HOSTNAME...; ver .env.example).
+# Guarda la lista en $SHAREIT_DATA/caddy/apps.txt, genera apps/routes.caddy y apps/sites.caddy
+# (que el Caddyfile importa), valida y recarga Caddy sin cortar conexiones. Si algo falla, vuelve atrás.
+# Caddy pasa X-Forwarded-For/-Proto/-Host a la app (y pisa el que mande el cliente).
+set -euo pipefail
+
+DATA="${SHAREIT_DATA:-$HOME/shareit-data}"
+PROXY_ENV="${LANAPP_ENV:-$DATA/proxy.env}"
+CONTAINER="${LANAPP_CONTAINER:-lan-proxy}"
+IMAGE="lan-proxy-caddy:1"
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PROXY_DIR="${LANAPP_PROXY_DIR:-$HERE}"
+STATE="${LANAPP_STATE:-$DATA/caddy}"
+LIST="$STATE/apps.txt"
+APPS_DIR="$STATE/apps"
+ROUTES="$APPS_DIR/routes.caddy"
+SITES="$APPS_DIR/sites.caddy"
+CTL="/usr/local/sbin/mdns-alias-ctl"
+
+die() { echo "lanapp: $*" >&2; exit 1; }
+
+# Lee KEY=valor de proxy.env sin ejecutarlo.
+envget() { [ -f "$PROXY_ENV" ] || return 0; sed -n "s/^[[:space:]]*$1=//p" "$PROXY_ENV" | tail -1 | sed -E "s/^['\"]//; s/['\"][[:space:]]*$//; s/[[:space:]]*$//"; }
+[ -f "$PROXY_ENV" ] || die "no encuentro $PROXY_ENV (copiá la sección del proxy de .env.example)"
+DOMAIN="$(envget BASE_DOMAIN)"; [ -n "$DOMAIN" ] || die "falta BASE_DOMAIN en $PROXY_ENV"
+APP_NAME="$(envget APP_NAME)"; APP_NAME="${APP_NAME:-chat}"
+APP_PORT="$(envget APP_PORT)"; APP_PORT="${APP_PORT:-8787}"
+LOCAL_HOSTNAME="$(envget LOCAL_HOSTNAME)"
+
+# La app principal, el nombre del server y genéricos.
+RESERVED=(www localhost "$APP_NAME" "$(hostname -s)")
+[ -n "$LOCAL_HOSTNAME" ] && RESERVED+=("$LOCAL_HOSTNAME")
+BLOCKED_PORTS=(2019 3306 5432 5433 6379 6380 9229 9230 11211 27017 27018)  # admin caddy, bases, redis, memcached, inspectores de node
+
+die() { echo "lanapp: $*" >&2; exit 1; }
+usage() { sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+mkdir -p "$APPS_DIR"
+touch "$LIST"
+[ -f "$ROUTES" ] || : > "$ROUTES"
+[ -f "$SITES" ] || : > "$SITES"
+rm -f "$APPS_DIR/apps.caddy" "$APPS_DIR/apps.caddy.bak"   # formato viejo
+
+render() {  # $1 = lista, $2 = routes|sites, stdout = snippet de Caddy
+  local name port
+  echo "# Generado por lanapp desde apps.txt — no editar a mano."
+  while read -r name port; do
+    [ -n "${name:-}" ] || continue
+    if [ "$2" = routes ]; then
+      printf '@app_%s host %s.%s\nhandle @app_%s {\n\treverse_proxy 127.0.0.1:%s\n}\n' \
+        "$name" "$name" "$DOMAIN" "$name" "$port"
+    else
+      printf 'http://%s.local {\n\timport solo_casa\n\treverse_proxy 127.0.0.1:%s\n}\n' "$name" "$port"
+    fi
+  done < "$1"
+}
+
+mdns() {  # $1 = enable|disable, $2 = nombre
+  sudo -n "$CTL" "$1" "$2" >/dev/null 2>&1 && return 0
+  echo "lanapp: no pude hacer '$1' del alias mDNS $2.local (¿falta /etc/sudoers.d/lanapp? ver README)." >&2
+  echo "        a mano: sudo $CTL $1 $2" >&2
+  return 1
+}
+
+running() { [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = true ]; }
+
+validate() {  # $1 = carpeta con apps.caddy candidato
+  # start.sh validate arma las variables derivadas y usa un token de relleno bien formado.
+  docker run --rm --network none --env-file "$PROXY_ENV" \
+    -v "$PROXY_DIR:/etc/caddy/proxy:ro" -v "$1:/etc/caddy/apps:ro" \
+    "$IMAGE" /bin/sh /etc/caddy/proxy/start.sh validate >/tmp/lanapp-validate.$$ 2>&1 \
+    || { grep -E '"level":"error"|Error' /tmp/lanapp-validate.$$ | tail -3 >&2; rm -f /tmp/lanapp-validate.$$; return 1; }
+  rm -f /tmp/lanapp-validate.$$
+}
+
+reload() {
+  if ! running; then
+    echo "  (el proxy no está corriendo: se aplica cuando arranque)"; return 0
+  fi
+  docker exec "$CONTAINER" /bin/sh /etc/caddy/proxy/start.sh reload >/dev/null 2>/tmp/lanapp-reload.$$ \
+    || { tail -3 /tmp/lanapp-reload.$$ >&2; rm -f /tmp/lanapp-reload.$$; return 1; }
+  rm -f /tmp/lanapp-reload.$$
+}
+
+apply() {  # $1 = lista nueva (archivo temporal)
+  local tmpdir; tmpdir="$(mktemp -d "$STATE/.lanapp.XXXXXX")"
+  render "$1" routes > "$tmpdir/routes.caddy"; render "$1" sites > "$tmpdir/sites.caddy"
+  validate "$tmpdir" || { rm -rf "$tmpdir"; die "la configuración nueva no es válida; no cambié nada"; }
+  cp "$LIST" "$LIST.bak"; cp "$ROUTES" "$ROUTES.bak"; cp "$SITES" "$SITES.bak"
+  cat "$1" > "$LIST"; cat "$tmpdir/routes.caddy" > "$ROUTES"; cat "$tmpdir/sites.caddy" > "$SITES"
+  rm -rf "$tmpdir"
+  if ! reload; then
+    cat "$LIST.bak" > "$LIST"; cat "$ROUTES.bak" > "$ROUTES"; cat "$SITES.bak" > "$SITES"; reload || true
+    die "Caddy no aceptó la recarga; volví a la lista anterior"
+  fi
+}
+
+has() { awk -v n="$1" '$1==n {f=1} END {exit !f}' "$LIST"; }
+
+rc=0
+cmd="${1:-}"; [ $# -gt 0 ] && shift
+exec 9>"$STATE/.lanapp.lock"; flock 9
+
+case "$cmd" in
+  add)
+    [ $# -eq 2 ] || usage 1
+    name="${1,,}"; port="$2"
+    [[ "$name" =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]] \
+      || die "nombre inválido '$1' (letras minúsculas, números y guiones; máx. 32; sin guión al principio/final)"
+    for r in "${RESERVED[@]}"; do [ "$name" = "$r" ] && die "'$name' está reservado"; done
+    [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] \
+      || die "puerto inválido '$port' (tiene que estar entre 1024 y 65535)"
+    for b in "${BLOCKED_PORTS[@]}"; do [ "$port" = "$b" ] && die "el puerto $port no se publica (base de datos / admin / inspector)"; done
+    has "$name" && die "'$name' ya existe ($(awk -v n="$name" '$1==n {print $2}' "$LIST")); sacala primero con: lanapp rm $name"
+    tmp="$(mktemp)"; { cat "$LIST"; echo "$name $port"; } | sort > "$tmp"
+    apply "$tmp"; rm -f "$tmp"
+    echo "OK: https://$name.$DOMAIN y http://$name.local → 127.0.0.1:$port"
+    mdns enable "$name" || rc=1
+    if ! (ss -ltnH "sport = :$port" 2>/dev/null | grep -q .); then
+      echo "  ojo: ahora no hay nada escuchando en el puerto $port (va a dar 502 hasta que la app arranque)"
+    elif ! (ss -ltnH "sport = :$port" 2>/dev/null | grep -qE '(127\.0\.0\.1|\*|0\.0\.0\.0|\[::\]|\[::1\]):'"$port"'\b'); then
+      echo "  ojo: lo que escucha en $port no está en 127.0.0.1; el proxy no le va a llegar"
+    fi
+    ;;
+  rm)
+    [ $# -eq 1 ] || usage 1
+    name="${1,,}"
+    has "$name" || die "'$name' no está en la lista"
+    tmp="$(mktemp)"; awk -v n="$name" '$1!=n' "$LIST" > "$tmp"
+    apply "$tmp"; rm -f "$tmp"
+    mdns disable "$name" || rc=1
+    echo "OK: quitadas https://$name.$DOMAIN y http://$name.local"
+    ;;
+  list|ls)
+    echo "https://$DOMAIN, https://$APP_NAME.$DOMAIN → 127.0.0.1:$APP_PORT ($APP_NAME, fijo; http://$APP_NAME.local redirige)"
+    while read -r name port; do [ -n "${name:-}" ] && echo "https://$name.$DOMAIN, http://$name.local → 127.0.0.1:$port"; done < "$LIST"
+    ;;
+  -h|--help|help|"") usage 0 ;;
+  *) usage 1 ;;
+esac
+exit "$rc"

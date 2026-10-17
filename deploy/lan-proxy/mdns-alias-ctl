@@ -1,0 +1,18 @@
+#!/bin/bash
+# mdns-alias-ctl enable|disable <nombre> — prende/apaga el alias mDNS <nombre>.local (mdns-alias@<nombre>).
+# Instalado como root en /usr/local/sbin/mdns-alias-ctl; sudoers deja al usuario del server correr
+# SOLO esto sin contraseña (ver lanapp.sudoers). Valida todo acá porque el comodín de sudoers no sirve para eso.
+set -euo pipefail
+ACTION="${1:-}"; NAME="${2:-}"
+[ $# -eq 2 ] || { echo "uso: mdns-alias-ctl enable|disable <nombre>" >&2; exit 2; }
+[[ "$NAME" =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]] || { echo "mdns-alias-ctl: nombre inválido" >&2; exit 2; }
+# No pisar el nombre propio del server (hostname y el host-name de avahi).
+AVAHI_NAME="$(sed -n 's/^[[:space:]]*host-name[[:space:]]*=[[:space:]]*//p' /etc/avahi/avahi-daemon.conf 2>/dev/null | tail -1)"
+for r in localhost "$(hostname -s)" "$AVAHI_NAME"; do
+  [ -n "$r" ] && [ "$NAME" = "$r" ] && { echo "mdns-alias-ctl: '$NAME' reservado" >&2; exit 2; }
+done
+case "$ACTION" in
+  enable)  exec /usr/bin/systemctl enable --now "mdns-alias@$NAME.service" ;;
+  disable) exec /usr/bin/systemctl disable --now "mdns-alias@$NAME.service" ;;
+  *) echo "mdns-alias-ctl: acción inválida" >&2; exit 2 ;;
+esac

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>{{APP_NAME}}</title>
+  <meta name="description" content="Asistente para la familia">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="{{APP_SHORT_NAME}}">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/vendor/marked.umd.js" defer></script>
+  <script src="/vendor/purify.min.js" defer></script>
+  <script src="/vendor/simplewebauthn-browser.umd.min.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <!-- Pantalla de ingreso -->
+  <section id="login-view" class="login" hidden>
+    <!-- Device mode (default): ask for access, an admin approves this device -->
+    <form id="device-login" class="login-card" hidden>
+      <img src="/icons/icon-192.png" alt="" class="login-logo" width="72" height="72">
+      <h1>{{APP_NAME}}</h1>
+      <label>
+        <span class="big-label">¿Cómo te llamás?</span>
+        <input id="device-name" name="name" autocomplete="given-name" autocapitalize="words" maxlength="40" required
+          placeholder="Tu nombre" class="big-input">
+      </label>
+      <p id="device-error" class="error" role="alert" hidden></p>
+      <button type="submit" class="btn-primary big-btn" id="device-btn">Pedir acceso</button>
+      <button type="button" class="link-btn install-login" id="install-login" hidden>Instalar como app en este celular</button>
+    </form>
+
+    <div id="device-wait" class="login-card" hidden>
+      <img src="/icons/icon-192.png" alt="" class="login-logo" width="72" height="72">
+      <h1 id="wait-title">¡Ya casi!</h1>
+      <p class="wait-text" id="wait-text"></p>
+      <div class="wait-code" id="wait-code" aria-label="Código"></div>
+      <p class="muted wait-status" id="wait-status"><span class="typing"><i></i><i></i><i></i></span> Esperando que te aprueben…</p>
+      <button type="button" class="btn-primary big-btn" id="wait-retry" hidden>Volver a pedir acceso</button>
+      <button type="button" class="link-btn" id="wait-cancel">Cancelar</button>
+    </div>
+
+    <!-- Passkey mode -->
+    <div id="passkey-login" class="login-card" hidden>
+      <img src="/icons/icon-192.png" alt="" class="login-logo" width="72" height="72">
+      <h1>{{APP_NAME}}</h1>
+      <p class="muted">Entrá con la huella, la cara o el bloqueo de tu celular.</p>
+      <p id="passkey-error" class="error" role="alert" hidden></p>
+      <button id="passkey-btn" type="button" class="btn-primary">Entrar con passkey</button>
+      <p class="muted small-help">¿Es la primera vez o cambiaste de celular? Pedile a quien administra
+        una <strong>invitación</strong> y abrila en este dispositivo.</p>
+    </div>
+
+    <!-- Invite: register a passkey on this device -->
+    <div id="invite-view" class="login-card" hidden>
+      <img src="/icons/icon-192.png" alt="" class="login-logo" width="72" height="72">
+      <h1 id="invite-title">¡Hola!</h1>
+      <p class="muted" id="invite-text">Vamos a crear tu passkey para que entres sin contraseña:
+        se usa la huella, la cara o el bloqueo de pantalla de este dispositivo.</p>
+      <div id="invite-desktop" class="invite-note" hidden>
+        <strong>Abrí este link en el celular donde vas a usar la passkey.</strong>
+        <span>Parece que estás en una computadora. Copiá el link y abrilo en tu celular
+          (conectado al Wi-Fi de casa). Si igual la querés crear acá, podés seguir.</span>
+        <button type="button" id="invite-copy-link" class="btn-ghost">Copiar link</button>
+      </div>
+      <label>
+        <span>Nombre de este dispositivo</span>
+        <input id="invite-device" maxlength="60" autocomplete="off">
+      </label>
+      <p id="invite-error" class="error" role="alert" hidden></p>
+      <button id="invite-btn" type="button" class="btn-primary">Crear mi passkey</button>
+    </div>
+
+    <!-- PIN mode (legacy) -->
+    <form id="login-form" class="login-card" autocomplete="on" hidden>
+      <img src="/icons/icon-192.png" alt="" class="login-logo" width="72" height="72">
+      <h1>{{APP_NAME}}</h1>
+      <p class="muted">Ingresá con tu nombre y tu PIN</p>
+      <label>
+        <span>Nombre</span>
+        <input id="login-name" name="username" autocomplete="username" autocapitalize="words" required>
+      </label>
+      <label>
+        <span>PIN</span>
+        <input id="login-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="current-password" required>
+      </label>
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <button type="submit" class="btn-primary">Entrar</button>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app-view" class="app" hidden>
+    <aside id="sidebar" class="sidebar" aria-label="Conversaciones">
+      <div class="sidebar-top">
+        <button id="new-chat" class="btn-new" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          Nueva charla
+        </button>
+      </div>
+      <nav id="chat-list" class="chat-list"></nav>
+      <button id="install-btn" class="admin-link install-link" type="button" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+        Instalar app
+      </button>
+      <a id="admin-link" class="admin-link" href="/admin" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.5 8 9 4.6-.5 8-4 8-9V6Z"/></svg>
+        Administración
+        <span class="badge-count" id="admin-badge" hidden></span>
+      </a>
+      <div class="sidebar-bottom">
+        <div class="me"><span class="avatar" id="me-avatar"></span><span id="me-name"></span></div>
+        <button id="logout" class="btn-ghost" type="button">Salir</button>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim" hidden></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button id="open-sidebar" class="icon-btn only-mobile" type="button" aria-label="Ver conversaciones">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div class="topbar-center">
+          <button id="model-btn" class="model-btn" type="button" aria-haspopup="dialog" aria-label="Elegir modelo">
+            <span id="model-name">Modelo</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <h2 id="chat-title" class="chat-title">Nueva charla</h2>
+        </div>
+        <button id="new-chat-top" class="icon-btn only-mobile" type="button" aria-label="Nueva charla">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </button>
+      </header>
+
+      <div id="scroller" class="scroller">
+        <div id="empty" class="empty">
+          <img src="/icons/icon-192.png" alt="" width="56" height="56">
+          <h3>¿En qué te ayudo hoy?</h3>
+          <div class="suggestions">
+            <button type="button" class="chip">Dame una receta fácil para la cena</button>
+            <button type="button" class="chip">Ayudame a escribir un mensaje de cumpleaños</button>
+            <button type="button" class="chip">Explicame algo como si tuviera 10 años</button>
+            <button type="button" class="chip">Ideas para un fin de semana en familia</button>
+          </div>
+        </div>
+        <div id="messages" class="messages"></div>
+      </div>
+
+      <form id="composer" class="composer">
+        <div class="composer-box">
+          <div id="tray" class="tray" hidden></div>
+          <div class="composer-row">
+          <button id="attach" class="attach" type="button" aria-label="Adjuntar foto o archivo">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>
+          </button>
+          <input id="file" type="file" multiple hidden
+            accept="image/jpeg,image/png,image/webp,image/gif,image/*,.pdf,.txt,.md,.csv,.json,.docx,.xlsx,.pptx,.odt,.ods,.odp,.html,.xml,.rtf,text/*">
+          <textarea id="input" rows="1" placeholder="Escribí tu mensaje…" enterkeyhint="send" aria-label="Mensaje"></textarea>
+          <button id="send" class="send" type="submit" aria-label="Enviar" disabled>
+            <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            <svg class="i-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+          </button>
+          </div>
+        </div>
+        <p class="disclaimer">El asistente puede equivocarse. Revisá lo importante.</p>
+      </form>
+    </main>
+  </div>
+
+  <dialog id="dlg-rename" class="dialog">
+    <form method="dialog">
+      <h3>Cambiar nombre</h3>
+      <input id="rename-input" maxlength="80" required>
+      <div class="dialog-actions">
+        <button value="ok" class="btn-primary">Guardar</button>
+        <button value="cancel" formnovalidate class="btn-ghost">Cancelar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-delete" class="dialog">
+    <form method="dialog">
+      <h3>¿Borrar esta charla?</h3>
+      <p class="muted" id="delete-name"></p>
+      <div class="dialog-actions">
+        <button value="ok" class="btn-danger">Borrar</button>
+        <button value="cancel" class="btn-ghost">Cancelar</button>
+      </div>
+    </form>
+  </dialog>
+
+ <dialog id="dlg-model" class="dialog dialog-model">
+    <form method="dialog">
+      <h3>Modelo</h3>
+      <div id="model-list" class="model-list" role="radiogroup" aria-label="Modelos"></div>
+      <label class="effort-label" id="effort-wrap">
+        <span>Cuánto piensa antes de responder</span>
+        <select id="effort-select"></select>
+      </label>
+      <p class="muted small">Se guarda para esta charla y queda como predeterminado para las nuevas.</p>
+      <div class="dialog-actions">
+        <button value="ok" class="btn-primary">Listo</button>
+        <button value="cancel" formnovalidate class="btn-ghost">Cancelar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-install" class="dialog dialog-install">
+    <form method="dialog">
+      <h3>Instalar la app</h3>
+
+      <div class="install-variant" data-variant="ios-safari">
+        <ol class="install-steps">
+          <li><span class="step-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg></span><span>Tocá el botón <strong>Compartir</strong> (abajo en el iPhone, arriba en el iPad).</span></li>
+          <li><span class="step-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg></span><span>Bajá y tocá <strong>"Agregar a pantalla de inicio"</strong>.</span></li>
+          <li><span class="step-icon step-text">Agregar</span><span>Tocá <strong>Agregar</strong> (arriba a la derecha).</span></li>
+        </ol>
+      </div>
+
+      <div class="install-variant" data-variant="ios-chrome">
+        <ol class="install-steps">
+          <li><span class="step-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg></span><span>Tocá <strong>Compartir</strong>: el ícono arriba a la derecha, en la barra de direcciones.</span></li>
+          <li><span class="step-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg></span><span>Tocá <strong>"Agregar a pantalla de inicio"</strong> (si no aparece, deslizá la lista).</span></li>
+          <li><span class="step-icon step-text">Agregar</span><span>Tocá <strong>Agregar</strong>.</span></li>
+        </ol>
+      </div>
+
+      <div class="install-variant" data-variant="ios-other">
+        <p>En el iPhone, abrí esta página en <strong>Safari</strong> (o Chrome) y tocá de nuevo <strong>Instalar app</strong>.</p>
+      </div>
+
+      <div class="install-variant" data-variant="android">
+        <ol class="install-steps">
+          <li><span class="step-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></span><span>Abrí esta página en <strong>Chrome</strong> y tocá el menú <strong>⋮</strong> (arriba a la derecha).</span></li>
+          <li><span class="step-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg></span><span>Tocá <strong>"Instalar app"</strong> o <strong>"Agregar a la pantalla principal"</strong>.</span></li>
+        </ol>
+      </div>
+
+      <div class="install-variant" data-variant="desktop">
+        <p>En la compu: abrila en <strong>Chrome</strong> o <strong>Edge</strong> y tocá el ícono de instalar en la barra de direcciones (o el menú → <em>Instalar</em>).</p>
+        <p>En el celular: <strong>Chrome</strong> en Android o <strong>Safari</strong> en el iPhone.</p>
+      </div>
+
+      <p class="install-note" id="install-note">La app instalada te va a pedir acceso una vez más: tocá <strong>Pedir acceso</strong> y avisá al que administra.</p>
+      <div class="dialog-actions">
+        <button value="ok" class="btn-primary">Entendido</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

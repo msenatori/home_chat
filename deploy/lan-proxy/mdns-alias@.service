@@ -1,0 +1,18 @@
+# Publica <nombre>.local por mDNS apuntando al server en la LAN (IPv4 + IPv6 ULA, ver mdns-alias).
+# Instalar: sudo install -m 755 mdns-alias /usr/local/bin/ && sudo install -m 644 mdns-alias@.service /etc/systemd/system/
+# Uso: sudo systemctl enable --now mdns-alias@chat
+[Unit]
+Description=mDNS alias %i.local
+After=avahi-daemon.service network-online.target
+Wants=network-online.target
+Requires=avahi-daemon.service
+
+[Service]
+# Opcional: LAN_IP= / LAN_IPV6= (si no, se detectan solas).
+EnvironmentFile=-/etc/default/mdns-alias
+ExecStart=/usr/local/bin/mdns-alias %i
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

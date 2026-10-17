@@ -1,0 +1,35 @@
+{
+  "name": "shareit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chat familiar tipo asistente de IA para la red de casa, sobre el modo headless del CLI de una suscripción de IA",
+  "license": "MIT",
+  "keywords": [
+    "chat",
+    "family",
+    "self-hosted",
+    "llm",
+    "pwa",
+    "sqlite",
+    "home-server"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "admin": "node --disable-warning=ExperimentalWarning scripts/admin.js",
+    "icons": "node scripts/make-icons.js",
+    "qr": "node scripts/make-qr.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "13.3.3",
+    "pdfjs-dist": "4.10.38",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "@simplewebauthn/browser": "13.3.0"
+  }
+}

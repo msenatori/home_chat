@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Administración · {{APP_SHORT_NAME}}</title>
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/admin.css">
+  <script src="/admin.js" defer></script>
+</head>
+<body class="admin">
+  <header class="admin-top">
+    <a href="/" class="icon-btn" aria-label="Volver al chat">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18 9 12l6-6"/></svg>
+    </a>
+    <h1>Administración</h1>
+    <span id="who" class="muted"></span>
+  </header>
+
+  <section id="requests" class="requests" hidden aria-live="polite">
+    <h2>Pedidos de acceso</h2>
+    <div id="request-list" class="request-list"></div>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="users" class="tab active">Personas</button>
+    <button type="button" role="tab" data-tab="usage" class="tab">Uso</button>
+    <button type="button" role="tab" data-tab="limits" class="tab">Límites</button>
+    <button type="button" role="tab" data-tab="settings" class="tab">Ajustes</button>
+  </nav>
+
+  <main class="admin-main">
+    <p id="denied" class="panel-note" hidden>Esta sección es solo para administradores. <a href="/">Volver al chat</a></p>
+
+    <!-- Personas -->
+    <section id="tab-users" class="tab-panel">
+      <div class="row-between">
+        <p class="muted small-note">Desde acá manejás las cuentas. No se pueden ver las conversaciones de nadie.</p>
+        <button id="add-user" type="button" class="btn-primary">+ Nueva persona</button>
+      </div>
+      <div id="user-list" class="cards"></div>
+    </section>
+
+    <!-- Uso -->
+    <section id="tab-usage" class="tab-panel" hidden>
+      <p class="privacy">🔒 Los reportes muestran solo <strong>datos de uso</strong> (cantidades, tokens, modelos).
+        Los administradores <strong>no pueden leer</strong> las conversaciones ni sus títulos.</p>
+      <div class="filters">
+        <label>Agrupar
+          <select id="f-period">
+            <option value="day">Por día</option>
+            <option value="week">Por semana</option>
+          </select>
+        </label>
+        <label>Período
+          <select id="f-range"></select>
+        </label>
+        <label>Persona
+          <select id="f-user"><option value="">Toda la familia</option></select>
+        </label>
+      </div>
+      <div id="tiles" class="tiles"></div>
+      <h3 class="chart-title">Mensajes</h3>
+      <div id="chart-messages" class="chart"></div>
+      <div class="legend" id="legend-messages"></div>
+      <h3 class="chart-title">Tokens</h3>
+      <div id="chart-tokens" class="chart"></div>
+      <div class="legend" id="legend-tokens"></div>
+      <h3 class="chart-title">Por persona</h3>
+      <div class="table-wrap"><table id="t-users" class="data"></table></div>
+      <h3 class="chart-title">Por modelo</h3>
+      <div class="table-wrap"><table id="t-models" class="data"></table></div>
+    </section>
+
+    <!-- Límites -->
+    <section id="tab-limits" class="tab-panel" hidden>
+      <p class="privacy">Estos límites son los de <strong>tu plan de IA</strong>, para toda la cuenta que usa el servidor:
+        suman lo que usa la familia acá y cualquier otro uso de esa misma cuenta.</p>
+      <div id="limits"></div>
+      <button id="reload-limits" type="button" class="btn-ghost">Actualizar</button>
+    </section>
+    <!-- Ajustes -->
+    <section id="tab-settings" class="tab-panel" hidden>
+      <div class="setting-card">
+        <label class="switch-row">
+          <span>
+            <strong>Permitir elegir modelo</strong>
+            <small class="muted">Muestra arriba del chat el botón para elegir modelo y cuánto piensa.
+              Se puede cambiar por persona en "Personas".</small>
+          </span>
+          <input type="checkbox" id="s-picker" class="switch">
+        </label>
+      </div>
+      <div class="setting-card">
+        <strong>Modelo para quienes no eligen</strong>
+        <p class="muted small-note">Lo usan todas las personas que no tienen permitido elegir (en todas sus charlas),
+          y es el punto de partida para las demás.</p>
+        <div class="filters">
+          <label>Modelo <select id="s-model"></select></label>
+          <label>Cuánto piensa <select id="s-effort"></select></label>
+        </div>
+        <p class="muted small-note" id="s-effective"></p>
+      </div>
+      <button id="s-save" type="button" class="btn-primary">Guardar ajustes</button>
+    </section>
+  </main>
+
+  <!-- Diálogos (dentro de la página, no ventanas del navegador) -->
+  <dialog id="dlg-user" class="dialog">
+    <form method="dialog" id="form-user">
+      <h3 id="dlg-user-title">Nueva persona</h3>
+      <label class="field" id="fld-name"><span>Nombre</span><input id="in-name" maxlength="40" autocomplete="off"></label>
+      <label class="field" id="fld-pin"><span>PIN (4 a 12 números)</span><input id="in-pin" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="off"></label>
+      <label class="check" id="fld-admin"><input type="checkbox" id="in-admin"> Administrador</label>
+      <p id="dlg-user-error" class="error" hidden></p>
+      <div class="dialog-actions">
+        <button value="ok" class="btn-primary" id="dlg-user-ok">Guardar</button>
+        <button value="cancel" formnovalidate class="btn-ghost">Cancelar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-confirm" class="dialog">
+    <form method="dialog">
+      <h3 id="confirm-title"></h3>
+      <p id="confirm-text" class="muted"></p>
+      <p id="confirm-error" class="error" hidden></p>
+      <div class="dialog-actions">
+        <button value="ok" id="confirm-ok" class="btn-danger">Confirmar</button>
+        <button value="cancel" class="btn-ghost">Cancelar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-invite" class="dialog">
+    <form method="dialog">
+      <h3 id="invite-title">Invitación</h3>
+      <p class="muted small-note">Mandale este link por WhatsApp (o como quieras). Lo tiene que abrir
+        <strong>en su celular</strong>, conectado al Wi-Fi de casa, para crear su passkey.
+        Sirve <strong>una sola vez</strong>. Vence: <span id="invite-expiry"></span></p>
+      <input id="invite-url" class="invite-link" readonly aria-label="Link de invitación">
+      <div class="invite-actions">
+        <button type="button" id="invite-copy" class="btn-primary big">Copiar link</button>
+        <button type="button" id="invite-share" class="btn-ghost big">Compartir</button>
+      </div>
+      <label class="field invite-msg-field">
+        <span>Mensaje para mandar</span>
+        <textarea id="invite-msg" rows="4" readonly></textarea>
+      </label>
+      <button type="button" id="invite-qr-toggle" class="link-btn">Mostrar QR</button>
+      <img id="invite-qr" class="invite-qr" alt="Código QR de la invitación" width="200" height="200" hidden>
+      <div class="dialog-actions">
+        <button value="ok" class="btn-ghost">Listo</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-devices" class="dialog">
+    <form method="dialog">
+      <h3 id="devices-title">Dispositivos</h3>
+      <div id="device-list" class="pk-list"></div>
+      <p id="devices-error" class="error" hidden></p>
+      <div class="dialog-actions">
+        <button value="ok" class="btn-primary">Cerrar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-passkeys" class="dialog">
+    <form method="dialog">
+      <h3 id="passkeys-title">Passkeys</h3>
+      <div id="passkey-list" class="pk-list"></div>
+      <p id="passkeys-error" class="error" hidden></p>
+      <div class="dialog-actions">
+        <button value="ok" class="btn-primary">Cerrar</button>
+        <button type="button" id="passkeys-invite" class="btn-ghost">Nueva invitación</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

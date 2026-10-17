@@ -1,0 +1,57 @@
+# Proxy de la red de casa. Todo lo específico de la instalación sale de proxy.env (ver
+# .env.example); start.sh arma las variables derivadas ({$LAN_IPV6_BIND}, {$LEGACY_SITES}).
+#  - https://{$BASE_DOMAIN} y https://<app>.{$BASE_DOMAIN} → certificados reales de Let's Encrypt
+#    (el dominio + comodín), por DNS-01 en Cloudflare: no hace falta abrir puertos a internet.
+#    Un DNS público {$BASE_DOMAIN} y *.{$BASE_DOMAIN} → LAN_IP cubre cualquier app nueva.
+#  - http://<app>.local, http://<host>.local y http://LAN_IP → redirigen (308) a https://{$BASE_DOMAIN}.
+# Para agregar una app:  lanapp add <nombre> <puerto>
+{
+	# Admin solo por un socket unix dentro del contenedor (nada en TCP); lo usan start.sh/lanapp.
+	admin unix//run/caddy-admin.sock
+	# Solo la IPv4 de la LAN, loopback y (opcional) la IPv6 ULA; nunca 0.0.0.0 ni la IPv6 pública.
+	default_bind {$LAN_IP} 127.0.0.1 {$LAN_IPV6_BIND}
+}
+
+# Solo IPs de casa. Va como `handle` (y el sitio pone todo lo demás en `handle`/`reverse_proxy`) porque
+# Caddy ordena las directivas: un `respond` suelto corre DESPUÉS de handle/redir y no frenaría nada.
+(solo_casa) {
+	@afuera not remote_ip 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.1/8 ::1 fc00::/7 fe80::/10
+	handle @afuera {
+		respond 403
+	}
+}
+
+# Certificados del dominio y su comodín para todas las apps. HTTP→HTTPS lo redirige Caddy solo.
+{$BASE_DOMAIN}, *.{$BASE_DOMAIN} {
+	tls {
+		# Si falta el token o es inválido, start.sh pone uno de relleno: el proxy arranca igual.
+		dns cloudflare {env.CF_API_TOKEN}
+		resolvers 1.1.1.1 1.0.0.1
+	}
+	import solo_casa
+
+	# La app principal: el dominio pelado y <APP_NAME>.<dominio>.
+	@app host {$BASE_DOMAIN} {$APP_NAME}.{$BASE_DOMAIN}
+	handle @app {
+		reverse_proxy 127.0.0.1:{$APP_PORT}
+	}
+
+	# Apps agregadas con `lanapp` (generado; no editar a mano).
+	import /etc/caddy/apps/routes*.caddy
+
+	# Nombre desconocido.
+	handle {
+		respond 404
+	}
+}
+
+# Nombres locales viejos → HTTPS (el login con passkeys solo anda en HTTPS con nombre real).
+{$LEGACY_SITES} {
+	import solo_casa
+	handle {
+		redir https://{$BASE_DOMAIN}{uri} 308
+	}
+}
+
+# http://<app>.local de las apps agregadas con `lanapp` (generado).
+import /etc/caddy/apps/sites*.caddy

@@ -1,0 +1,21 @@
+node_modules/
+.DS_Store
+*.db
+*.db-wal
+*.db-shm
+
+# Config local y secretos (ver .env.example)
+.env
+.env.*
+!.env.example
+# QR generados con `npm run qr` (codifican tu dominio)
+/qr/
+
+# Datos de la app (base SQLite, adjuntos, sesiones) y secretos del server
+shareit-data/
+/data/
+*.sqlite
+*.env
+!.env.example
+cloudflare.env
+*.log

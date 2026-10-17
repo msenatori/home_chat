@@ -1,0 +1,21 @@
+# Proxy de la red de casa. Config de la instalación en $SHAREIT_DATA/proxy.env (ver .env.example)
+# y el token de Cloudflare en $SHAREIT_DATA/cloudflare.env (CF_API_TOKEN=..., modo 600).
+services:
+  lan-proxy:
+    build: .                 # Caddy + módulo DNS de Cloudflare (ver Dockerfile)
+    image: lan-proxy-caddy:1
+    container_name: lan-proxy
+    restart: unless-stopped
+    network_mode: host       # escucha en LAN_IP:80/443 y llega a las apps en 127.0.0.1
+    env_file:
+      - path: ${SHAREIT_DATA:-${HOME}/shareit-data}/proxy.env        # LAN_IP, BASE_DOMAIN, ...
+        required: true
+      - path: ${SHAREIT_DATA:-${HOME}/shareit-data}/cloudflare.env   # CF_API_TOKEN
+        required: false                                             # sin token arranca igual (start.sh)
+    volumes:
+      # La carpeta entera (no el archivo suelto) para que un rsync del Caddyfile se vea sin recrear.
+      - ./:/etc/caddy/proxy:ro
+      - ${SHAREIT_DATA:-${HOME}/shareit-data}/caddy/apps:/etc/caddy/apps:ro   # generado por `lanapp`
+      - ${SHAREIT_DATA:-${HOME}/shareit-data}/caddy/data:/data                # certificados y cuenta ACME
+      - ${SHAREIT_DATA:-${HOME}/shareit-data}/caddy/config:/config
+    command: ["/bin/sh", "/etc/caddy/proxy/start.sh", "run"]
