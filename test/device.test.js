@@ -231,3 +231,95 @@ test('app name comes from SHAREIT_APP_NAME (escaped in HTML and JSON)', async ()
   assert.equal(manifest.short_name, 'Prueba');
   assert.equal((await new Device().call('/api/auth/config')).data.appName, 'Chat "de" Prueba & Co');
 });
+
+// ---------------------------------------------------------------- same-phone auto-approval
+async function approveManually(device, name) {
+  const r = await device.call('/api/access/request', { method: 'POST', body: { name } });
+  assert.equal(r.data.status, 'pending');
+  const req = (await admin.call('/api/admin/requests')).data.requests.find((x) => x.code === r.data.code);
+  await admin.call(`/api/admin/requests/${req.id}/approve`, { method: 'POST', body: {} });
+  assert.equal((await device.call('/api/access/status')).data.status, 'approved');
+}
+
+test('auto-approve: same IP + existing person with a recent device → enters immediately', async () => {
+  const safari = new Device(undefined, '10.0.5.1');
+  await approveManually(safari, 'Lucía Test');
+  const chrome = new Device('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/140.0 Mobile/15E148 Safari/604.1', '10.0.5.1');
+  const r = await chrome.call('/api/access/request', { method: 'POST', body: { name: 'lucia test' } });
+  assert.equal(r.status, 201);
+  assert.equal(r.data.status, 'approved');
+  assert.equal(r.data.autoApproved, true);
+  assert.equal(r.data.user.name, 'Lucía Test');
+  assert.equal((await chrome.call('/api/me')).status, 200, 'session cookie set in the same response');
+  const lucia = (await admin.call('/api/admin/users')).data.users.find((u) => u.name === 'Lucía Test');
+  const devs = (await admin.call(`/api/admin/users/${lucia.id}/devices`)).data.devices;
+  assert.ok(devs.some((d) => d.autoApproved && d.name === 'iPhone · Chrome'));
+  const { data } = await admin.call('/api/admin/requests');
+  assert.ok(data.recentAuto.some((a) => a.name === 'Lucía Test' && a.device === 'iPhone · Chrome'));
+});
+
+test('auto-approve: different IP → pending', async () => {
+  const r = await new Device(undefined, '10.0.5.2').call('/api/access/request', { method: 'POST', body: { name: 'Lucía Test' } });
+  assert.equal(r.data.status, 'pending');
+});
+
+test('auto-approve: new person from the same IP → pending', async () => {
+  const r = await new Device(undefined, '10.0.5.1').call('/api/access/request', { method: 'POST', body: { name: 'Beto Test' } });
+  assert.equal(r.data.status, 'pending');
+  assert.equal(r.data.isNew, true);
+});
+
+test('auto-approve: never as someone else (another existing person on the same IP) → pending', async () => {
+  const r = await new Device(undefined, '10.0.5.1').call('/api/access/request', { method: 'POST', body: { name: 'Ana Test' } });
+  assert.equal(r.data.status, 'pending');
+});
+
+test('auto-approve: not after a rejection for that name from that IP in the last 24 h', async () => {
+  const d = new Device(undefined, '10.0.6.1');
+  await approveManually(d, 'Abuela Test');
+  const r1 = await new Device(undefined, '10.0.6.1').call('/api/access/request', { method: 'POST', body: { name: 'Abuela Test' } });
+  assert.equal(r1.data.status, 'approved'); // auto (sanity)
+  // Someone asks as Abuela from that IP with a name variant that isn't auto (typo → new person), admin rejects a real one:
+  const conn = db();
+  conn.prepare(`INSERT INTO access_requests (secret_hash, name, code, device, ip, status, created_at, expires_at, decided_at)
+    VALUES ('x-test-hash', 'abuela test', 11, 'Dispositivo', '10.0.6.1', 'rejected', ?, ?, ?)`).run(Date.now(), Date.now() + 1000, Date.now());
+  conn.close();
+  const r2 = await new Device(undefined, '10.0.6.1').call('/api/access/request', { method: 'POST', body: { name: 'Abuela Test' } });
+  assert.equal(r2.data.status, 'pending');
+});
+
+test('auto-approve: stale session (older than N days) → pending', async () => {
+  const lucia = (await admin.call('/api/admin/users')).data.users.find((u) => u.name === 'Lucía Test');
+  const conn = db();
+  conn.prepare('UPDATE sessions SET last_used_at = ? WHERE user_id = ?').run(Date.now() - 31 * 86400_000, lucia.id);
+  conn.close();
+  const r = await new Device(undefined, '10.0.5.1').call('/api/access/request', { method: 'POST', body: { name: 'Lucía Test' } });
+  assert.equal(r.data.status, 'pending');
+});
+
+test('auto-approve: revoked (disconnected) device → pending', async () => {
+  const d = new Device(undefined, '10.0.7.1');
+  await approveManually(d, 'Ana Test');
+  const ana = (await admin.call('/api/admin/users')).data.users.find((u) => u.name === 'Ana Test');
+  for (const dev of (await admin.call(`/api/admin/users/${ana.id}/devices`)).data.devices) {
+    // disconnect only the one on 10.0.7.1 (the most recent)
+    await admin.call(`/api/admin/devices/${dev.id}`, { method: 'DELETE' });
+    break;
+  }
+  const r = await new Device(undefined, '10.0.7.1').call('/api/access/request', { method: 'POST', body: { name: 'Ana Test' } });
+  assert.equal(r.data.status, 'pending');
+});
+
+test('session IP is tracked on use', async () => {
+  const d = new Device(undefined, '10.0.8.1');
+  await approveManually(d, 'Beto Test');
+  d.ip = '10.0.8.2'; // same phone, now on another network
+  assert.equal((await d.call('/api/me')).status, 200);
+  const conn = db();
+  const beto = conn.prepare("SELECT id FROM users WHERE display_name = 'Beto Test'").get();
+  const ips = conn.prepare('SELECT last_ip FROM sessions WHERE user_id = ?').all(beto.id).map((r) => r.last_ip);
+  conn.close();
+  assert.ok(ips.includes('10.0.8.2'));
+  const r = await new Device(undefined, '10.0.8.2').call('/api/access/request', { method: 'POST', body: { name: 'Beto Test' } });
+  assert.equal(r.data.status, 'approved');
+});

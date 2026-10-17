@@ -36,12 +36,12 @@ const DUMMY_HASH = hashPin('000000');
 export const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 /** New session; `passkeyId` links it so deleting that passkey also logs it out. */
-export function createSession(userId, passkeyId = null, { method, deviceName = null } = {}) {
+export function createSession(userId, passkeyId = null, { method, deviceName = null, ip = null, autoApproved = false } = {}) {
   const token = crypto.randomBytes(32).toString('base64url');
   const t = now();
-  db.prepare(`INSERT INTO sessions (token_hash, user_id, passkey_id, auth_method, device_name, created_at, last_used_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(sha256(token), userId, passkeyId, method || (passkeyId ? 'passkey' : 'pin'), deviceName, t, t, t + config.sessionDays * 86400_000);
+  db.prepare(`INSERT INTO sessions (token_hash, user_id, passkey_id, auth_method, device_name, last_ip, auto_approved, created_at, last_used_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(sha256(token), userId, passkeyId, method || (passkeyId ? 'passkey' : 'pin'), deviceName, ip, autoApproved ? 1 : 0, t, t, t + config.sessionDays * 86400_000);
   return token;
 }
 
@@ -63,10 +63,10 @@ export function login(username, pin) {
   return { token: createSession(user.id), user };
 }
 
-export function userFromToken(token) {
+export function userFromToken(token, ip = null) {
   if (!token) return null;
   const row = db.prepare(`
-    SELECT u.id, u.username, u.display_name, u.is_admin, u.last_active_at, s.expires_at, s.last_used_at
+    SELECT u.id, u.username, u.display_name, u.is_admin, u.last_active_at, s.expires_at, s.last_used_at, s.last_ip
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ?`).get(sha256(token));
   if (!row) return null;
@@ -80,9 +80,10 @@ export function userFromToken(token) {
   if (!row.last_active_at || t - row.last_active_at > 60_000) {
     db.prepare('UPDATE users SET last_active_at = ? WHERE id = ?').run(t, row.id);
   }
-  if (!row.last_used_at || t - row.last_used_at > 60_000) {
-    db.prepare('UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE token_hash = ?')
-      .run(t, t + config.sessionDays * 86400_000, sha256(token));
+  // Also refresh right away when the client IP changes (keeps auto-approval data fresh).
+  if (!row.last_used_at || t - row.last_used_at > 60_000 || (ip && ip !== row.last_ip)) {
+    db.prepare('UPDATE sessions SET last_used_at = ?, expires_at = ?, last_ip = COALESCE(?, last_ip) WHERE token_hash = ?')
+      .run(t, t + config.sessionDays * 86400_000, ip, sha256(token));
   }
   return { id: row.id, username: row.username, displayName: row.display_name, isAdmin: !!row.is_admin, sessionHash: sha256(token) };
 }

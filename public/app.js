@@ -178,6 +178,7 @@ async function requestAccess(e) {
   btn.disabled = true;
   try {
     const r = await api('/access/request', { method: 'POST', body: { name } });
+    if (r.status === 'approved' && r.user) { await showApp(r.user); return; } // same phone: in right away
     showWaiting(r);
     waitTimer = setTimeout(pollDevice, 3000);
   } catch (ex) {
@@ -194,9 +195,24 @@ document.addEventListener('visibilitychange', () => {
 let adminPoll = null;
 let lastPending = 0;
 function stopAdminPoll() { clearInterval(adminPoll); adminPoll = null; }
+// Auto-approved entries (same phone, other browser): toast each one once.
+function seenAutoId(set) {
+  try {
+    if (set != null) localStorage.setItem('shareit_seen_auto', String(set));
+    return Number(localStorage.getItem('shareit_seen_auto') || 0);
+  } catch { return set ?? 0; }
+}
 async function checkPendingRequests() {
   try {
-    const { requests } = await api('/admin/requests');
+    const { requests, recentAuto = [] } = await api('/admin/requests');
+    const maxAuto = Math.max(0, ...recentAuto.map((a) => a.id));
+    const seen = seenAutoId();
+    if (seen) {
+      for (const a of recentAuto.filter((x) => x.id > seen).reverse()) {
+        toast(`${a.name} entró desde otro navegador del mismo celular (${a.device}).`);
+      }
+    }
+    if (maxAuto > seen || !seen) seenAutoId(Math.max(maxAuto, seen) || -1);
     const n = requests.length;
     const badge = $('#admin-badge');
     badge.hidden = !n;

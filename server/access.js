@@ -67,10 +67,31 @@ export function createRequest(name, { ip, ua }) {
   const match = findUserByLooseName(display);
   const secret = crypto.randomBytes(32).toString('base64url');
   const t = now();
-  const row = db.prepare(`INSERT INTO access_requests (secret_hash, name, user_id, code, device, ip, created_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`).get(
-    sha256(secret), display, match?.id ?? null, pickCode(), deviceFromUA(ua), ip, t, t + config.accessRequestMinutes * 60_000);
+  const auto = match && canAutoApprove(match.id, display, ip);
+  const row = db.prepare(`INSERT INTO access_requests (secret_hash, name, user_id, code, device, ip, created_at, expires_at,
+      status, approved_user_id, auto_approved, decided_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`).get(
+    sha256(secret), display, match?.id ?? null, pickCode(), deviceFromUA(ua), ip, t, t + config.accessRequestMinutes * 60_000,
+    auto ? 'approved' : 'pending', auto ? match.id : null, auto ? 1 : 0, auto ? t : null);
   return { secret, request: row };
+}
+
+/**
+ * Same phone, another browser (or the installed app, which has its own storage):
+ * an EXISTING person asking from the same IP where they already have a device
+ * session used in the last SHAREIT_AUTO_APPROVE_DAYS days gets in right away.
+ * Never for new people, never as someone else, and not if a request for that
+ * name from that IP was rejected in the last 24 h.
+ */
+function canAutoApprove(userId, name, ip) {
+  const days = config.autoApproveDays;
+  if (!(days > 0) || !ip) return false;
+  const t = now();
+  const rejected = db.prepare("SELECT name FROM access_requests WHERE ip = ? AND status = 'rejected' AND decided_at > ?")
+    .all(ip, t - 24 * 3600_000).some((r) => nameKey(r.name) === nameKey(name));
+  if (rejected) return false;
+  return !!db.prepare(`SELECT 1 FROM sessions WHERE user_id = ? AND auth_method = 'device' AND last_ip = ?
+    AND expires_at > ? AND last_used_at > ? LIMIT 1`).get(userId, ip, t, t - days * 86400_000);
 }
 
 export function requestBySecret(secret) {
@@ -88,7 +109,11 @@ export function claimApproved(secret) {
   if (!r || r.status !== 'approved') return null;
   const claimed = db.prepare("UPDATE access_requests SET status = 'consumed' WHERE id = ? AND status = 'approved'").run(r.id);
   if (Number(claimed.changes) !== 1) return null;
-  return { userId: r.approved_user_id, token: createSession(r.approved_user_id, null, { method: 'device', deviceName: r.device }) };
+  return {
+    userId: r.approved_user_id,
+    autoApproved: !!r.auto_approved,
+    token: createSession(r.approved_user_id, null, { method: 'device', deviceName: r.device, ip: r.ip, autoApproved: !!r.auto_approved }),
+  };
 }
 
 export function cancelRequest(secret) {
@@ -150,14 +175,22 @@ export function rejectRequest(ref, { by = null } = {}) {
 
 /** Device sessions of a person, for the "Dispositivos" list. */
 export function listDevices(userId) {
-  return db.prepare(`SELECT rowid AS id, device_name, auth_method, created_at, last_used_at FROM sessions
+  return db.prepare(`SELECT rowid AS id, device_name, auth_method, auto_approved, created_at, last_used_at FROM sessions
     WHERE user_id = ? AND expires_at > ? ORDER BY COALESCE(last_used_at, created_at) DESC`).all(userId, now()).map((s) => ({
     id: s.id, name: s.device_name || (s.auth_method === 'passkey' ? 'Passkey' : s.auth_method === 'pin' ? 'Ingreso con PIN' : 'Dispositivo'),
-    method: s.auth_method || 'pin', approvedAt: s.created_at, lastUsedAt: s.last_used_at,
+    method: s.auth_method || 'pin', approvedAt: s.created_at, lastUsedAt: s.last_used_at, autoApproved: !!s.auto_approved,
   }));
 }
 
 export function disconnectDevice(sessionRowId) {
   const r = db.prepare('DELETE FROM sessions WHERE rowid = ?').run(Number(sessionRowId));
   if (!Number(r.changes)) throw new AccessError('Ese dispositivo ya no está conectado.', 404);
+}
+
+/** Auto-approved entries of the last `hours`, so admins notice them (toast + panel list). */
+export function recentAutoApprovals(hours = 24) {
+  return db.prepare(`SELECT r.id, r.name, r.device, r.decided_at, u.display_name FROM access_requests r
+    LEFT JOIN users u ON u.id = r.approved_user_id
+    WHERE r.auto_approved = 1 AND r.decided_at > ? ORDER BY r.decided_at DESC LIMIT 20`).all(now() - hours * 3600_000)
+    .map((r) => ({ id: r.id, name: r.display_name || r.name, device: r.device, at: r.decided_at }));
 }

@@ -89,6 +89,8 @@ addColumn('sessions', 'passkey_id', 'TEXT');      // passkey that created the se
 addColumn('sessions', 'auth_method', 'TEXT');     // 'pin' | 'passkey' | 'device' (NULL = older PIN sessions)
 addColumn('sessions', 'device_name', 'TEXT');     // e.g. "iPhone · Safari" (device-approval sessions)
 addColumn('sessions', 'last_used_at', 'INTEGER');
+addColumn('sessions', 'last_ip', 'TEXT');           // client IP of the last use (for same-phone auto-approval)
+addColumn('sessions', 'auto_approved', 'INTEGER NOT NULL DEFAULT 0');
 
 // "Aprobar dispositivo": a device asks for access with a name; an admin approves it.
 db.exec(`
@@ -109,6 +111,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS access_requests_status ON access_requests(status, expires_at);
 `);
+addColumn('access_requests', 'auto_approved', 'INTEGER NOT NULL DEFAULT 0');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS passkeys (

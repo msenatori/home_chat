@@ -36,6 +36,9 @@ export const config = {
   // 'passkey' (WebAuthn, kept but off by default) or 'pin' (legacy numeric PIN).
   authMode: ['pin', 'passkey'].includes(process.env.SHAREIT_AUTH) ? process.env.SHAREIT_AUTH : 'device',
   accessRequestMinutes: Number(process.env.SHAREIT_REQUEST_MINUTES || 15),
+  // Same phone, another browser/installed app: auto-approve a request for an existing
+  // person from the same IP where they have a device used in the last N days (0 = off).
+  autoApproveDays: Number(process.env.SHAREIT_AUTO_APPROVE_DAYS ?? 30),
   // WebAuthn relying party. RP ID = registrable domain shared by all origins
   // (e.g. "home.example.com" for https://chat.home.example.com).
   rpId: process.env.SHAREIT_RP_ID || 'localhost',

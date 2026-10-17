@@ -424,7 +424,12 @@ let requestsTimer = null;
 
 async function loadRequests() {
   let requests = [];
-  try { ({ requests } = await api('/admin/requests')); } catch { return; }
+  let recentAuto = [];
+  try { ({ requests, recentAuto = [] } = await api('/admin/requests')); } catch { return; }
+  const autoList = $('#auto-list');
+  autoList.textContent = '';
+  $('#auto-list-wrap').hidden = !recentAuto.length;
+  for (const a of recentAuto) autoList.append(el('li', null, `${a.name} · ${a.device} · ${fmtAgo(a.at)} · aprobado automáticamente`));
   const box = $('#request-list');
   $('#requests').hidden = !requests.length;
   box.textContent = '';
@@ -493,7 +498,9 @@ async function showDevices(u) {
         }));
       };
       normal();
-      item.append(el('div', 'pk-name', d.name), meta, actions);
+      const title = el('div', 'pk-name', d.name);
+      if (d.autoApproved) { title.append(' '); title.append(el('span', 'badge auto', 'aprobado automáticamente')); }
+      item.append(title, meta, actions);
       box.append(item);
     }
   };

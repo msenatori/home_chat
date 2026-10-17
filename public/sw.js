@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so it opens fast and can be installed.
 // The API is never cached.
-const CACHE = 'shareit-v10';
+const CACHE = 'shareit-v11';
 const SHELL = [
   '/', '/index.html', '/app.css', '/app.js', '/manifest.webmanifest',
   '/vendor/marked.umd.js', '/vendor/purify.min.js',

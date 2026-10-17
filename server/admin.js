@@ -9,7 +9,7 @@ import {
 } from './users.js';
 import QRCode from 'qrcode';
 import {
-  AccessError, approveRequest, disconnectDevice, listDevices, listPending, rejectRequest,
+  AccessError, approveRequest, disconnectDevice, listDevices, listPending, recentAutoApprovals, rejectRequest,
 } from './access.js';
 import {
   PasskeyError, createInvite, deletePasskey, inviteUrl, listPasskeys, renamePasskey,
@@ -88,7 +88,7 @@ export async function handleAdmin(req, res, user, parts, url, h) {
     }
 
     if (section === 'requests') {
-      if (!id && method === 'GET') return sendJson(res, 200, { requests: listPending() });
+      if (!id && method === 'GET') return sendJson(res, 200, { requests: listPending(), recentAuto: recentAutoApprovals() });
       if (id && action === 'approve' && method === 'POST') {
         const b = await readJson(req);
         const asUserId = b.asUserId != null && b.asUserId !== '' ? Number(b.asUserId) : null;

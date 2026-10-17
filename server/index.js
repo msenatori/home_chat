@@ -476,6 +476,17 @@ async function handleApi(req, res, url) {
       const { name } = await readJson(req);
       if (secret) cancelRequest(secret); // a new request replaces this device's previous one
       const { secret: s, request: r } = accessCall(() => createRequest(name, { ip, ua: req.headers['user-agent'] }));
+      if (r.auto_approved) {
+        // Same phone, another browser: enter right away (no waiting screen).
+        const c = claimApproved(s);
+        const u = db.prepare('SELECT display_name, is_admin FROM users WHERE id = ?').get(c.userId);
+        console.log(`[access] request #${r.id} AUTO-APPROVED (same phone) user=${c.userId} name="${r.name}" device="${r.device}" ip=${ip}`);
+        res.setHeader('Set-Cookie', sessionCookie(req, c.token, config.sessionDays * 86400));
+        return sendJson(res, 201, {
+          status: 'approved', autoApproved: true,
+          user: { name: u.display_name, isAdmin: !!u.is_admin, modelPicker: canPickModel(c.userId) },
+        });
+      }
       console.log(`[access] request #${r.id} name="${r.name}" ${r.user_id ? `user=${r.user_id}` : 'new-person'} code=${r.code} device="${r.device}" ip=${ip}`);
       return sendJson(res, 201, view(r), { 'Set-Cookie': reqCookie(s, config.accessRequestMinutes * 60) });
     }
@@ -565,7 +576,7 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
   }
 
-  const user = userFromToken(token);
+  const user = userFromToken(token, ip);
   if (!user) throw new HttpError(401, 'Tenés que ingresar');
 
   if (parts[0] === 'me' && method === 'GET') {

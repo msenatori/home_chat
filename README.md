@@ -86,6 +86,7 @@ journalctl --user -u shareit -f        # ver logs en vivo
 | `SHAREIT_APP_NAME` / `SHAREIT_APP_SHORT_NAME` | `Charla en familia` / `Charla` | Nombre en la app, la pestaña y el ícono |
 | `SHAREIT_INSTRUCTIONS_FILE` | (vacío) | Archivo con instrucciones propias para el asistente (idioma, tono) |
 | `SHAREIT_AUTH` | `device` | Ingreso: `device` (aprobar dispositivo), `passkey` o `pin` |
+| `SHAREIT_AUTO_APPROVE_DAYS` | `30` | Mismo celular, otro navegador: aprobación automática si la persona tiene un dispositivo usado hace menos de N días desde la misma IP (`0` = apagado) |
 | `SHAREIT_REQUEST_MINUTES` / `SHAREIT_SESSION_DAYS` | `15` / `365` | Vigencia de un pedido de acceso / de un dispositivo aprobado (se renueva con el uso) |
 | `SHAREIT_HOST` / `SHAREIT_PORT` | `::` / `8787` | Dónde escucha (IPv4 + IPv6) |
 | `SHAREIT_LAN_ONLY` | `1` | Rechaza conexiones que no vengan de la red local |
@@ -135,6 +136,17 @@ El nombre no distingue mayúsculas ni tildes ("lucia" = "Lucía").
    alguien escribió mal su nombre, se puede aprobar **como** otra persona existente.
 4. El celular entra solo (revisa cada 3 s). Ese dispositivo queda conectado
    1 año, y cada uso lo extiende.
+
+**Mismo celular, otro navegador:** en el iPhone cada navegador y la app agregada
+a la pantalla de inicio guardan sus datos por separado, así que el mismo celular
+pediría acceso otra vez. Para evitarlo, un pedido con el nombre de una persona
+**que ya existe** se aprueba solo si llega desde la **misma IP** donde esa persona
+tiene un dispositivo conectado y usado en los últimos `SHAREIT_AUTO_APPROVE_DAYS`
+días (30 por defecto; `0` lo apaga). Nunca para personas nuevas, nunca como otra
+persona, y no si en las últimas 24 h se rechazó un pedido con ese nombre desde esa
+IP. Esos dispositivos quedan marcados como *aprobado automáticamente* en
+**Dispositivos**, aparecen en el panel ("Entraron solos") y los administradores ven
+un aviso en el chat. La IP de cada dispositivo se actualiza con cada uso.
 
 Los pedidos vencen a los 15 minutos; hay límite de pedidos por red y por nombre.
 En **Personas → Dispositivos** se ve cada dispositivo (aprobado, último uso) y se
